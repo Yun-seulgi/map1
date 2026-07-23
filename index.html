@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>매장 방문 관리</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
@@ -23,10 +22,6 @@
   header .sub{font-size:11px;color:var(--muted);margin-top:2px;}
   .icon-btn{width:32px;height:32px;border-radius:9px;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;font-size:15px;}
 
-  .toolbar{display:flex;gap:8px;padding:8px 16px;overflow-x:auto;border-bottom:1px solid #00000010;flex:0 0 auto;}
-  .toolbar button, .toolbar label{flex:0 0 auto;font-size:11.5px;font-weight:600;padding:8px 11px;border-radius:18px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:5px;}
-  .toolbar button.primary{background:var(--ink);color:var(--paper);}
-  .toolbar input[type=file]{display:none;}
 
   .tabbar{display:flex;border-bottom:1px solid #00000015;flex:0 0 auto;}
   .tabbar button{flex:1;padding:10px 4px;border:none;background:none;font-size:12.5px;font-weight:700;color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;}
@@ -87,6 +82,7 @@
   .badge.open{background:#2e9e6d22;color:var(--ok);}
   .badge.closed{background:#c0392b22;color:var(--danger);}
   .badge.fr{background:#5fd0c022;color:#227a6d;}
+  .badge.claimed{background:#00000012;color:var(--muted);}
   .card-meta{font-size:11px;color:var(--muted);margin-top:2px;}
   .card-stats{font-size:11px;color:var(--ink);margin-top:3px;display:flex;gap:10px;}
   .card-actions{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;align-items:stretch;}
@@ -123,33 +119,28 @@
   #toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:9px 16px;border-radius:20px;font-size:12px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:30;max-width:88%;text-align:center;}
   #toast.show{opacity:1;}
 
-  #dropOverlay{position:fixed;inset:0;z-index:40;background:#0f1b1aee;display:none;align-items:center;justify-content:center;text-align:center;color:var(--paper);pointer-events:none;}
-  #dropOverlay.show{display:flex;}
-  #dropOverlay .drop-box{border:2.5px dashed var(--accent);border-radius:20px;padding:40px 30px;margin:24px;}
-  #dropOverlay .drop-box .emoji{font-size:32px;margin-bottom:10px;}
-  #dropOverlay .drop-box .title{font-size:14px;font-weight:700;}
-  #dropOverlay .drop-box .sub{font-size:11.5px;color:#ffffffa0;margin-top:6px;}
 </style>
 </head>
 <body>
 <div id="app">
 
+  <div id="nameGateBg" style="position:fixed;inset:0;z-index:1000;background:var(--paper);display:flex;align-items:center;justify-content:center;padding:24px;">
+    <div style="max-width:340px;width:100%;text-align:center;">
+      <div style="font-size:19px;font-weight:800;margin-bottom:6px;">담당자 이름을 입력해주세요</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.5;">여러 담당자가 함께 사용하는 화면이에요.<br>입력한 이름으로 방문 담당이 구분됩니다.</div>
+      <input id="nameGateInput" placeholder="이름 (예: 홍길동)" style="width:100%;padding:12px;border-radius:10px;border:1.5px solid #00000025;font-size:14px;margin-bottom:10px;box-sizing:border-box;">
+      <button id="nameGateConfirm" style="width:100%;padding:12px;border:none;border-radius:10px;background:var(--ink);color:var(--paper);font-weight:700;font-size:14px;cursor:pointer;">시작하기</button>
+    </div>
+  </div>
+
   <header>
     <div>
       <h1>매장 방문 관리</h1>
       <div class="sub" id="countSummary">매장 0곳</div>
+      <div class="sub" id="userBadge" style="text-decoration:underline;cursor:pointer;margin-top:1px;">담당자: -</div>
     </div>
     <button class="icon-btn" id="locBtn" title="현재 위치">📍</button>
   </header>
-
-  <div class="toolbar">
-    <label class="primary">📄 엑셀 업로드<input type="file" id="fileInput" accept=".xlsx,.xls,.csv"></label>
-    <button id="templateBtn">⬇ 업로드 양식</button>
-    <button id="openAddBtn">+ 매장 직접 추가</button>
-    <button id="sampleBtn">샘플로 보기</button>
-    <button id="clearBtn">전체 삭제</button>
-    <button id="exportDoneBtn">⬇ 방문완료 다운로드</button>
-  </div>
 
   <div class="tabbar">
     <button class="active" data-tab="unassigned">전체 매장 <span class="cnt" id="cntUnassigned">0</span></button>
@@ -211,6 +202,13 @@
     </div>
   </div>
 
+  <div id="unvisitedOnlyBar" style="display:none;padding:8px 16px;border-bottom:1px solid #00000010;">
+    <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12.5px;font-weight:600;">
+      <input type="checkbox" id="unvisitedOnlyCheckbox" checked style="width:17px;height:17px;">
+      <span>미방문 매장만 보기 (다른 담당자가 선택했거나 방문완료된 매장 제외)</span>
+    </label>
+  </div>
+
   <div id="listWrap">
     <div class="list-empty" id="listEmpty">아직 매장이 없어요.<br>엑셀 파일을 업로드하거나 직접 추가해 보세요.</div>
   </div>
@@ -231,58 +229,16 @@
 
 <div id="toast"></div>
 
-<div id="dropOverlay">
-  <div class="drop-box">
-    <div class="emoji">📥</div>
-    <div class="title">여기에 파일을 놓으면 업로드돼요</div>
-    <div class="sub">엑셀(.xlsx/.xls) 또는 CSV 파일</div>
-  </div>
-</div>
-
-<!-- Firebase 연동을 위한 모듈 스크립트 설정 -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyA9GwOvhiKgivI_bQ7CLfjNXdYOoF7UrYM",
-    authDomain: "map1-75007.firebaseapp.com",
-    projectId: "map1-75007",
-    storageBucket: "map1-75007.firebasestorage.app",
-    messagingSenderId: "737801614934",
-    appId: "1:737801614934:web:dfcf2a5c7cb86a9ee02df7",
-    measurementId: "G-MMZ7CC7Z0K"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-
-  // 전역 변수로 Firebase 함수들 연결
-  window.db = db;
-  window.fsDoc = doc;
-  window.fsSetDoc = setDoc;
-  window.fsDeleteDoc = deleteDoc;
-  window.fsWriteBatch = writeBatch;
-
-  // 실시간 수신 구독
-  onSnapshot(collection(db, "stores"), (snapshot) => {
-    let newStores = [];
-    snapshot.forEach((doc) => {
-      newStores.push({ id: doc.id, ...doc.data() });
-    });
-    window.stores = newStores;
-    if (window.renderApp) window.renderApp();
-  });
-</script>
-
 <script>
 (function(){
 "use strict";
 
-window.stores = []; // {id,region,name,category,address,email,phone,gmapLink,status,rating,reviewCount,franchise,lat,lng,visitStatus,visitDate}
+var stores = []; // {id,region,name,category,address,email,phone,gmapLink,status,rating,reviewCount,franchise,lat,lng,visitStatus,visitDate,assignee}
 var currentLoc = null;
+var currentUser = null;
+var unvisitedOnly = true;
 var activeTab = 'unassigned';
-var selected = new Set(); // checkbox-selected ids
+var selected = new Set(); // checkbox-selected ids (per current tab context)
 var lastVisibleList = [];
 var lassoSelected = new Set();
 var filters = {regions:new Set(), categories:new Set(), statuses:new Set(), franchise:new Set(), ratingMin:0, reviewMin:0, sort:'rating_desc'};
@@ -292,6 +248,7 @@ var lassoMode = false;
 var pickRefMode = false;
 var lastBounds = null;
 
+var appEl = document.getElementById('app');
 var listWrap = document.getElementById('listWrap');
 var listEmpty = document.getElementById('listEmpty');
 var mapEmpty = document.getElementById('mapEmpty');
@@ -307,45 +264,6 @@ function toast(msg){
   t.textContent = msg; t.classList.add('show');
   clearTimeout(t._h); t._h = setTimeout(function(){t.classList.remove('show');}, 2200);
 }
-
-// Firebase 헬퍼 함수
-async function saveStoreToDB(storeData) {
-  if (window.db) {
-    var id = storeData.id || uid();
-    storeData.id = id;
-    await window.fsSetDoc(window.fsDoc(window.db, "stores", id), storeData, { merge: true });
-  }
-}
-
-async function removeStoreFromDB(id) {
-  if (window.db) {
-    await window.fsDeleteDoc(window.fsDoc(window.db, "stores", id));
-  }
-}
-
-async function saveMultipleStoresToDB(storesArr) {
-  if (window.db && storesArr.length > 0) {
-    var batch = window.fsWriteBatch(window.db);
-    storesArr.forEach(function(s) {
-      if (!s.id) s.id = uid();
-      var ref = window.fsDoc(window.db, "stores", s.id);
-      batch.set(ref, s, { merge: true });
-    });
-    await batch.commit();
-  }
-}
-
-async function clearAllStoresFromDB() {
-  if (window.db && window.stores.length > 0) {
-    var batch = window.fsWriteBatch(window.db);
-    window.stores.forEach(function(s) {
-      var ref = window.fsDoc(window.db, "stores", s.id);
-      batch.delete(ref);
-    });
-    await batch.commit();
-  }
-}
-
 function haversineKm(a,b){
   var R=6371, dLat=(b.lat-a.lat)*Math.PI/180, dLng=(b.lng-a.lng)*Math.PI/180;
   var lat1=a.lat*Math.PI/180, lat2=b.lat*Math.PI/180;
@@ -356,24 +274,7 @@ function gmapDirUrl(s){
   return 'https://www.google.com/maps/dir/?api=1&destination='+s.lat+','+s.lng;
 }
 
-var geocodeCache = {};
-function sleep(ms){ return new Promise(function(r){setTimeout(r,ms);}); }
-async function geocodeAddress(address){
-  var key = address.trim().toLowerCase();
-  if(geocodeCache[key]) return geocodeCache[key];
-  try{
-    var resp = await fetch('/api/geocode?address=' + encodeURIComponent(address));
-    if(!resp.ok) return null;
-    var data = await resp.json();
-    if(data && typeof data.lat === 'number' && typeof data.lng === 'number'){
-      var result = {lat:data.lat, lng:data.lng};
-      geocodeCache[key] = result;
-      return result;
-    }
-  }catch(e){}
-  return null;
-}
-
+// ---------- filter chip data ----------
 function uniqueVals(arr, key){
   var seen = {}, out = [];
   arr.forEach(function(s){ var v=(s[key]||'').trim(); if(v && !seen[v]){seen[v]=1; out.push(v);} });
@@ -394,8 +295,17 @@ function renderChips(containerId, values, selectedSet){
   });
 }
 
+// ---------- filtering / sorting ----------
 function tabStores(tab){
-  return window.stores.filter(function(s){ return s.visitStatus === tab; });
+  if(tab === 'unassigned'){
+    return unvisitedOnly
+      ? stores.filter(function(s){ return s.visitStatus === 'unassigned'; })
+      : stores.slice();
+  }
+  if(tab === 'today'){
+    return stores.filter(function(s){ return s.visitStatus === 'today' && s.assignee === currentUser; });
+  }
+  return stores.filter(function(s){ return s.visitStatus === tab; });
 }
 function filterOnly(list){
   return list.filter(function(s){
@@ -426,11 +336,15 @@ function ensureOrder(list){
   return withOrder.concat(withoutOrder);
 }
 
+// ---------- render ----------
 function render(){
-  document.getElementById('countSummary').textContent = '매장 '+window.stores.length+'곳';
-  document.getElementById('cntUnassigned').textContent = tabStores('unassigned').length;
-  document.getElementById('cntToday').textContent = tabStores('today').length;
-  document.getElementById('cntDone').textContent = tabStores('done').length;
+  document.getElementById('countSummary').textContent = '매장 '+stores.length+'곳';
+  document.getElementById('cntUnassigned').textContent = stores.filter(function(s){return s.visitStatus==='unassigned';}).length;
+  document.getElementById('cntToday').textContent = stores.filter(function(s){return s.visitStatus==='today' && s.assignee===currentUser;}).length;
+  document.getElementById('cntDone').textContent = stores.filter(function(s){return s.visitStatus==='done';}).length;
+
+  var unvisitedBar = document.getElementById('unvisitedOnlyBar');
+  unvisitedBar.style.display = activeTab === 'unassigned' ? 'flex' : 'none';
 
   var baseList = tabStores(activeTab);
   renderChips('regionChips', uniqueVals(baseList,'region'), filters.regions);
@@ -447,12 +361,12 @@ function render(){
   renderMap(visible);
   renderBulkBar();
   updateSelectAllBtn();
+  pushStoresToServer();
 }
-window.renderApp = render;
 
 function renderList(visible){
   listWrap.innerHTML = '';
-  if(window.stores.length === 0){
+  if(stores.length === 0){
     listWrap.appendChild(listEmpty);
     return;
   }
@@ -493,7 +407,7 @@ function buildCard(s){
   card.className = 'card';
   card.dataset.storeId = s.id;
 
-  var showCheckbox = activeTab !== 'done';
+  var showCheckbox = activeTab === 'today' || (activeTab === 'unassigned' && s.visitStatus === 'unassigned');
   var cb = null;
   if(showCheckbox){
     cb = document.createElement('input');
@@ -515,6 +429,8 @@ function buildCard(s){
       '<span class="card-name"></span>'+
       '<span class="badge '+(s.status==='영업중'?'open':'closed')+'">'+s.status+'</span>'+
       (s.franchise==='Y' ? '<span class="badge fr">프랜차이즈</span>' : '')+
+      (activeTab==='unassigned' && s.visitStatus==='today' ? '<span class="badge claimed">'+(s.assignee||'담당자')+' 선택함</span>' : '')+
+      (activeTab==='unassigned' && s.visitStatus==='done' ? '<span class="badge claimed">방문완료</span>' : '')+
     '</div>'+
     '<div class="card-meta"></div>'+
     '<div class="card-stats">'+
@@ -558,7 +474,8 @@ function buildCard(s){
       e.stopPropagation();
       s.visitStatus = 'today';
       s.visitDate = null;
-      saveStoreToDB(s);
+      s.assignee = currentUser;
+      render();
       toast(s.name+' 을(를) 오늘 방문 리스트로 되돌렸어요');
     });
     actions.appendChild(undo);
@@ -613,15 +530,11 @@ function attachDragToday(row, storeId){
       });
       if(placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
 
-      var updatedBatch = [];
       newOrderIds.forEach(function(id, i){
-        var s = window.stores.find(function(x){ return x.id === id; });
-        if(s) {
-          s.routeOrder = i+1;
-          updatedBatch.push(s);
-        }
+        var s = stores.find(function(x){ return x.id === id; });
+        if(s) s.routeOrder = i+1;
       });
-      saveMultipleStoresToDB(updatedBatch);
+      render();
     }
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
@@ -641,16 +554,15 @@ document.getElementById('bulkCancel').addEventListener('click', function(){ sele
 document.getElementById('bulkAction').addEventListener('click', function(){
   var ids = Array.from(selected);
   if(activeTab === 'unassigned'){
-    var updated = [];
-    ids.forEach(function(id){ 
-      var s = window.stores.find(function(x){return x.id===id;}); 
-      if(s) { s.visitStatus='today'; updated.push(s); } 
+    ids.forEach(function(id){
+      var s = stores.find(function(x){return x.id===id;});
+      if(s && s.visitStatus === 'unassigned'){ s.visitStatus = 'today'; s.assignee = currentUser; }
     });
-    saveMultipleStoresToDB(updated);
     toast(ids.length+'곳을 오늘 방문 리스트로 옮겼어요');
     selected.clear();
+    render();
   } else if(activeTab === 'today'){
-    var toComplete = ids.map(function(id){ return window.stores.find(function(x){return x.id===id;}); }).filter(Boolean);
+    var toComplete = ids.map(function(id){ return stores.find(function(x){return x.id===id;}); }).filter(Boolean);
     openCompleteModal(toComplete);
   }
 });
@@ -672,6 +584,7 @@ document.querySelectorAll('.tabbar button').forEach(function(btn){
   });
 });
 
+// ---------- filter bar toggle ----------
 var filterOpen = false;
 document.getElementById('filterToggle').addEventListener('click', function(){
   filterOpen = !filterOpen;
@@ -706,6 +619,7 @@ document.getElementById('selectAllBtn').addEventListener('click', function(){
   render();
 });
 
+// ---------- detail modal ----------
 var modalBg = document.getElementById('modalBg');
 var modal = document.getElementById('modal');
 function closeModal(){ modalBg.classList.remove('open'); }
@@ -730,7 +644,11 @@ function openDetail(s){
     ['리뷰수', s.reviewCount||'0'],
     ['프랜차이즈', s.franchise==='Y' ? '예' : '아니오']
   ];
+  if(s.visitStatus === 'today'){
+    rows.push(['담당자', s.assignee || '-']);
+  }
   if(s.visitStatus === 'done'){
+    rows.push(['담당자', s.assignee || '-']);
     rows.push(['방문일', s.visitDate || '-']);
     rows.push(['반응 별점', s.visitRating ? '★'.repeat(s.visitRating)+'☆'.repeat(5-s.visitRating) : '(별점 없음)']);
     rows.push(['메모', s.visitMemo ? s.visitMemo.replace(/\n/g,'<br>') : '(메모 없음)']);
@@ -741,18 +659,23 @@ function openDetail(s){
   });
   html += '<div class="detail-actions">';
   html += '<a href="'+gmapDirUrl(s)+'" target="_blank" rel="noopener" style="flex:1;padding:11px;border-radius:10px;font-size:12.5px;font-weight:700;text-align:center;background:#1a73e8;color:#fff;text-decoration:none;">🗺️ 길안내</a>';
+  var isMine = s.assignee === currentUser;
   if(s.visitStatus === 'unassigned') html += '<button id="detailAction">오늘 방문 리스트로 추가</button>';
-  else if(s.visitStatus === 'today') html += '<button id="detailAction">방문완료 처리</button>';
+  else if(s.visitStatus === 'today' && isMine) html += '<button id="detailAction">방문완료 처리</button>';
+  else if(s.visitStatus === 'today' && !isMine) html += '<span style="flex:1;text-align:center;font-size:12px;color:var(--muted);padding:11px;">'+(s.assignee||'다른 담당자')+'님이 오늘 방문 예정이에요</span>';
   else html += '<button id="detailAction" style="background:#00000012;color:var(--ink);">오늘 방문 리스트로 되돌리기</button>';
   html += '</div>';
   modal.innerHTML = html;
   openModal();
   document.getElementById('detailClose').addEventListener('click', closeModal);
-  document.getElementById('detailAction').addEventListener('click', function(){
-    if(s.visitStatus === 'unassigned'){ s.visitStatus = 'today'; saveStoreToDB(s); closeModal(); }
-    else if(s.visitStatus === 'today'){ closeModal(); openCompleteModal([s]); }
-    else { s.visitStatus = 'today'; s.visitDate = null; saveStoreToDB(s); closeModal(); }
-  });
+  var actionBtn = document.getElementById('detailAction');
+  if(actionBtn){
+    actionBtn.addEventListener('click', function(){
+      if(s.visitStatus === 'unassigned'){ s.visitStatus = 'today'; s.assignee = currentUser; closeModal(); render(); }
+      else if(s.visitStatus === 'today'){ closeModal(); openCompleteModal([s]); }
+      else { s.visitStatus = 'today'; s.visitDate = null; s.assignee = currentUser; closeModal(); render(); }
+    });
+  }
 }
 
 function openCompleteModal(storeList){
@@ -792,203 +715,14 @@ function openCompleteModal(storeList){
       s.visitRating = selectedStars || null;
       s.visitMemo = memo;
     });
-    saveMultipleStoresToDB(storeList);
     closeModal();
     selected.clear();
+    render();
     toast(storeList.length+'곳 방문완료 처리했어요');
   });
 }
 
-document.getElementById('openAddBtn').addEventListener('click', function(){
-  modal.innerHTML =
-    '<h3><span>매장 직접 추가</span><span class="x" id="addClose">✕</span></h3>'+
-    '<div class="row2"><input id="fRegion" placeholder="지역"><input id="fCategory" placeholder="업종"></div>'+
-    '<input id="fName" placeholder="상호명">'+
-    '<input id="fAddress" placeholder="주소 (해외 주소 가능)">'+
-    '<div class="row2"><input id="fEmail" placeholder="이메일"><input id="fPhone" placeholder="전화번호"></div>'+
-    '<input id="fGmap" placeholder="구글지도링크">'+
-    '<div class="row2">'+
-      '<select id="fStatus"><option value="영업중">영업중</option><option value="임시휴업">임시휴업</option></select>'+
-      '<select id="fFranchise"><option value="N">프랜차이즈 아님</option><option value="Y">프랜차이즈</option></select>'+
-    '</div>'+
-    '<div class="row2"><input id="fRating" placeholder="평점 (예: 4.5)"><input id="fReview" placeholder="리뷰수 (예: 120)"></div>'+
-    '<div class="modal-actions"><button class="cancel" id="addCancel">취소</button><button class="confirm" id="addConfirm">추가</button></div>';
-  openModal();
-  document.getElementById('addClose').addEventListener('click', closeModal);
-  document.getElementById('addCancel').addEventListener('click', closeModal);
-  document.getElementById('addConfirm').addEventListener('click', async function(){
-    var name = document.getElementById('fName').value.trim();
-    var address = document.getElementById('fAddress').value.trim();
-    if(!name || !address){ toast('상호명과 주소는 필수예요'); return; }
-    var btn = document.getElementById('addConfirm');
-    var orig = btn.textContent; btn.textContent = '위치 찾는 중...'; btn.disabled = true;
-    var geo = await geocodeAddress(address);
-    btn.textContent = orig; btn.disabled = false;
-    if(!geo){ toast('주소로 위치를 찾지 못했어요. 조금 더 구체적으로 입력해보세요'); return; }
-    
-    var newStore = {
-      id: uid(),
-      region: document.getElementById('fRegion').value.trim(),
-      name: name,
-      category: document.getElementById('fCategory').value.trim(),
-      address: address,
-      email: document.getElementById('fEmail').value.trim(),
-      phone: document.getElementById('fPhone').value.trim(),
-      gmapLink: document.getElementById('fGmap').value.trim(),
-      status: document.getElementById('fStatus').value,
-      rating: document.getElementById('fRating').value.trim(),
-      reviewCount: document.getElementById('fReview').value.trim(),
-      franchise: document.getElementById('fFranchise').value,
-      lat: geo.lat, lng: geo.lng,
-      visitStatus: 'unassigned', visitDate: null
-    };
-    saveStoreToDB(newStore);
-    closeModal();
-  });
-});
-
-document.getElementById('clearBtn').addEventListener('click', function(){ clearAllStoresFromDB(); selected.clear(); lassoSelected.clear(); });
-document.getElementById('sampleBtn').addEventListener('click', function(){
-  currentLoc = {lat:37.5665, lng:126.9780};
-  var samples = [
-    {id:uid(),region:'강남구',name:'스타커피 강남점',category:'카페',address:'서울 강남구 테헤란로 1',email:'',phone:'',gmapLink:'',status:'영업중',rating:'4.6',reviewCount:'1240',franchise:'Y',lat:37.4979,lng:127.0276,visitStatus:'unassigned',visitDate:null},
-    {id:uid(),region:'강남구',name:'봉순이식당',category:'한식',address:'서울 강남구 역삼동 2',email:'',phone:'',gmapLink:'',status:'영업중',rating:'4.2',reviewCount:'88',franchise:'N',lat:37.5006,lng:127.0365,visitStatus:'unassigned',visitDate:null},
-    {id:uid(),region:'마포구',name:'홍대분식',category:'분식',address:'서울 마포구 홍대입구 3',email:'',phone:'',gmapLink:'',status:'임시휴업',rating:'3.9',reviewCount:'52',franchise:'N',lat:37.5563,lng:126.9236,visitStatus:'unassigned',visitDate:null},
-    {id:uid(),region:'마포구',name:'연남빵집',category:'베이커리',address:'서울 마포구 연남동 4',email:'',phone:'',gmapLink:'',status:'영업중',rating:'4.8',reviewCount:'2310',franchise:'N',lat:37.5622,lng:126.9254,visitStatus:'unassigned',visitDate:null},
-    {id:uid(),region:'종로구',name:'인사동찻집',category:'카페',address:'서울 종로구 인사동 5',email:'',phone:'',gmapLink:'',status:'영업중',rating:'4.1',reviewCount:'410',franchise:'N',lat:37.5740,lng:126.9857,visitStatus:'unassigned',visitDate:null}
-  ];
-  saveMultipleStoresToDB(samples);
-  toast('샘플 데이터를 불러왔어요');
-});
-
-document.getElementById('templateBtn').addEventListener('click', function(){
-  var header = ['지역','상호','업종','주소','이메일주소','전화번호','구글지도링크','영업상태','평점','리뷰수','프랜차이즈여부','위도','경도'];
-  var example = ['강남구','스타커피 강남점','카페','서울 강남구 테헤란로 1','store@example.com','010-1234-5678','https://maps.google.com/?q=...','영업중','4.6','1240','Y','37.4979','127.0276'];
-  var ws = XLSX.utils.aoa_to_sheet([header, example]);
-  var wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '업로드양식');
-  XLSX.writeFile(wb, '매장_업로드_양식.xlsx');
-  toast('업로드 양식을 다운로드했어요');
-});
-
-document.getElementById('exportDoneBtn').addEventListener('click', function(){
-  var doneList = tabStores('done').slice().sort(function(a,b){
-    return (a.visitDate||'').localeCompare(b.visitDate||'') || (a.name||'').localeCompare(b.name||'');
-  });
-  if(doneList.length === 0){ toast('방문완료된 매장이 없어요'); return; }
-  var header = ['방문일','지역','상호','업종','주소','전화번호','영업상태','평점','리뷰수','프랜차이즈여부','반응 별점','메모'];
-  var rows = doneList.map(function(s){
-    return [
-      s.visitDate || '',
-      s.region || '',
-      s.name || '',
-      s.category || '',
-      s.address || '',
-      s.phone || '',
-      s.status || '',
-      s.rating || '',
-      s.reviewCount || '',
-      s.franchise === 'Y' ? 'Y' : 'N',
-      s.visitRating || '',
-      s.visitMemo || ''
-    ];
-  });
-  var ws = XLSX.utils.aoa_to_sheet([header].concat(rows));
-  var wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '방문완료');
-  XLSX.writeFile(wb, '방문완료_리스트_'+todayStr()+'.xlsx');
-  toast(doneList.length+'곳의 방문완료 리스트를 다운로드했어요');
-});
-
-async function processUploadedFile(file){
-  if(!file) return;
-  var reader = new FileReader();
-  reader.onload = async function(ev){
-    try{
-      var data = new Uint8Array(ev.target.result);
-      var wb = XLSX.read(data, {type:'array'});
-      var sheet = wb.Sheets[wb.SheetNames[0]];
-      var rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:''});
-      rows = rows.slice(1);
-
-      var toGeocode = [];
-      var fastAdded = [];
-      rows.forEach(function(r){
-        var name = (r[1]||'').toString().trim();
-        if(!name) return;
-        var addr = (r[3]||'').toString().trim();
-        var entry = {
-          region:(r[0]||'').toString().trim(),
-          name:name,
-          category:(r[2]||'').toString().trim(),
-          address:addr,
-          email:(r[4]||'').toString().trim(),
-          phone:(r[5]||'').toString().trim(),
-          gmapLink:(r[6]||'').toString().trim(),
-          status:(r[7]||'').toString().trim() || '영업중',
-          rating:(r[8]||'').toString().trim(),
-          reviewCount:(r[9]||'').toString().trim(),
-          franchise:(r[10]||'').toString().trim().toUpperCase()==='Y' ? 'Y':'N'
-        };
-        var lat = parseFloat(r[11]), lng = parseFloat(r[12]);
-        if(!isNaN(lat) && !isNaN(lng)){
-          fastAdded.push(Object.assign({id:uid(), lat:lat, lng:lng, visitStatus:'unassigned', visitDate:null}, entry));
-        } else if(addr){
-          toGeocode.push(entry);
-        }
-      });
-
-      if(fastAdded.length>0){ 
-        saveMultipleStoresToDB(fastAdded);
-        toast(fastAdded.length+'곳을 위도/경도로 바로 추가했어요'); 
-      }
-
-      if(toGeocode.length === 0){
-        if(fastAdded.length===0) toast("가져올 행이 없어요. D열(주소) 또는 L·M열(위도/경도)이 채워져 있는지 확인해주세요");
-        return;
-      }
-
-      var added = 0, failed = 0;
-      var geocodedBatch = [];
-      for(var i=0;i<toGeocode.length;i++){
-        toast('매장 위치 찾는 중… ('+(i+1)+'/'+toGeocode.length+')');
-        var item = toGeocode[i];
-        var geo = await geocodeAddress(item.address);
-        if(geo){
-          var newS = Object.assign({id:uid(), lat:geo.lat, lng:geo.lng, visitStatus:'unassigned', visitDate:null}, item);
-          geocodedBatch.push(newS);
-          added++;
-        } else { failed++; }
-        if(i < toGeocode.length-1) await sleep(300);
-      }
-      saveMultipleStoresToDB(geocodedBatch);
-      toast(added+'곳 주소를 지오코딩해서 추가했어요'+(failed? ' ('+failed+'곳은 주소를 찾지 못함)':''));
-    }catch(err){
-      toast('파일을 읽는 중 오류가 발생했어요. 양식에 맞는지 확인해주세요');
-    }
-  };
-  reader.readAsArrayBuffer(file);
-}
-
-document.getElementById('fileInput').addEventListener('change', function(e){
-  processUploadedFile(e.target.files[0]);
-  e.target.value = '';
-});
-
-var dropOverlay = document.getElementById('dropOverlay');
-var dragCounter = 0;
-var appEl = document.getElementById('app');
-appEl.addEventListener('dragenter', function(e){ e.preventDefault(); dragCounter++; dropOverlay.classList.add('show'); });
-appEl.addEventListener('dragover', function(e){ e.preventDefault(); });
-appEl.addEventListener('dragleave', function(e){ e.preventDefault(); dragCounter--; if(dragCounter<=0){dragCounter=0; dropOverlay.classList.remove('show');} });
-appEl.addEventListener('drop', function(e){
-  e.preventDefault(); dragCounter=0; dropOverlay.classList.remove('show');
-  var file = e.dataTransfer.files && e.dataTransfer.files[0];
-  if(!file){ toast('파일을 인식하지 못했어요'); return; }
-  if(!/\.(xlsx|xls|csv)$/i.test(file.name)){ toast('엑셀(.xlsx/.xls) 또는 CSV 파일만 업로드할 수 있어요'); return; }
-  processUploadedFile(file);
-});
-
+// ---------- current location ----------
 document.getElementById('locBtn').addEventListener('click', function(){
   if(!navigator.geolocation){ toast('이 브라우저는 위치 정보를 지원하지 않아요'); return; }
   navigator.geolocation.getCurrentPosition(function(pos){
@@ -998,10 +732,11 @@ document.getElementById('locBtn').addEventListener('click', function(){
   }, function(){ toast('위치 확인 실패'); });
 });
 
+// ================= MAP (Leaflet) =================
 var map = null;
 var markersLayer = null;
 var routeLayer = null;
-var currentMarkerData = [];
+var currentMarkerData = []; // [{store, marker, latlng}]
 var suppressAutoFit = false;
 var lassoLayer = null;
 var lassoLatLngs = [];
@@ -1042,7 +777,7 @@ function initMapControls(){
     if(!lassoMode || !lassoLayer) return;
     if(lassoLatLngs.length > 2){
       currentMarkerData.forEach(function(item){
-        if(pointInPolygonLatLng(item.latlng, lassoLatLngs)) lassoSelected.add(item.store.id);
+        if(item.store.visitStatus === 'unassigned' && pointInPolygonLatLng(item.latlng, lassoLatLngs)) lassoSelected.add(item.store.id);
       });
       render();
     }
@@ -1082,6 +817,7 @@ function pointInPolygonLatLng(pt, poly){
 function pinRadius(){
   if(!map) return 9;
   var z = map.getZoom();
+  // shrink pins as you zoom in further, so dense clusters overlap less
   return Math.max(4, Math.min(11, 15 - (z - 11)));
 }
 
@@ -1139,9 +875,11 @@ function renderMap(visible){
       marker = L.marker(latlng, {icon: icon});
       orderedForRoute.push({order:s.routeOrder, latlng:latlng});
     } else {
+      var isClaimedElsewhere = activeTab === 'unassigned' && s.visitStatus !== 'unassigned';
       marker = L.circleMarker(latlng, {
         radius: radius, color:'#f4f2ec', weight:2,
-        fillColor: isSel ? '#e8823c' : '#0f1b1a', fillOpacity: 1
+        fillColor: isSel ? '#e8823c' : (isClaimedElsewhere ? '#7c8d8a' : '#0f1b1a'),
+        fillOpacity: isClaimedElsewhere ? 0.6 : 1
       });
     }
     marker.addTo(markersLayer);
@@ -1178,18 +916,17 @@ function renderLassoBar(){
 }
 document.getElementById('lassoClear').addEventListener('click', function(){ lassoSelected.clear(); render(); });
 document.getElementById('lassoAddToday').addEventListener('click', function(){
-  var updated = [];
-  lassoSelected.forEach(function(id){ 
-    var s = window.stores.find(function(x){return x.id===id;}); 
-    if(s) { s.visitStatus='today'; updated.push(s); }
+  lassoSelected.forEach(function(id){
+    var s = stores.find(function(x){return x.id===id;});
+    if(s && s.visitStatus === 'unassigned'){ s.visitStatus = 'today'; s.assignee = currentUser; }
   });
-  saveMultipleStoresToDB(updated);
   toast(lassoSelected.size+'곳을 오늘 방문 리스트로 옮겼어요');
   lassoSelected.clear();
+  render();
 });
 
 function renderMapTools(){
-  if(window.stores.length === 0){ mapTools.style.display = 'none'; return; }
+  if(stores.length === 0){ mapTools.style.display = 'none'; return; }
   if(activeTab === 'unassigned'){
     mapTools.style.display = 'flex';
     mapTools.innerHTML = '<button id="lassoBtn" class="'+(lassoMode?'on':'')+'">✏️ 범위 선택</button>';
@@ -1243,8 +980,8 @@ function resetTodayList(){
   var list = tabStores('today');
   if(list.length === 0){ toast('오늘 방문 리스트가 이미 비어있어요'); return; }
   list.forEach(function(s){ s.visitStatus = 'unassigned'; delete s.routeOrder; });
-  saveMultipleStoresToDB(list);
   selected.clear();
+  render();
   toast('오늘 방문 리스트를 초기화했어요 ('+list.length+'곳을 전체 매장으로 되돌림)');
 }
 
@@ -1266,12 +1003,94 @@ function optimizeRouteToday(){
   }
   order.forEach(function(s,i){ s.routeOrder = i+1; });
   tabStores('today').forEach(function(s){ if(order.indexOf(s) === -1) delete s.routeOrder; });
-  saveMultipleStoresToDB(tabStores('today'));
+  render();
   toast('기준 위치 기준으로 최적 동선을 계산했어요 ('+order.length+'곳)');
 }
 
+document.getElementById('unvisitedOnlyCheckbox').addEventListener('change', function(e){
+  unvisitedOnly = e.target.checked;
+  render();
+});
+
+// ---------- shared backend sync (multi-user) ----------
+// Talks to your own server's /api/stores (see server.js). If no backend is
+// reachable (e.g. testing here in the claude.ai preview), this silently no-ops
+// and the app behaves as a local single-user session, same as before.
+var pushDebounceTimer = null;
+var initialLoadDone = false;
+function pushStoresToServer(){
+  if(!initialLoadDone) return; // don't push until we've merged whatever's already on the server
+  clearTimeout(pushDebounceTimer);
+  pushDebounceTimer = setTimeout(function(){
+    fetch('/api/stores', {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(stores)
+    }).catch(function(){});
+  }, 400);
+}
+async function loadStoresFromServer(){
+  try{
+    var resp = await fetch('/api/stores');
+    if(resp.ok){
+      var data = await resp.json();
+      if(Array.isArray(data) && data.length){ stores = data; render(); }
+    }
+  }catch(e){ /* no backend reachable — stay in local-only mode */ }
+  finally{ initialLoadDone = true; }
+}
+function startPolling(){
+  setInterval(async function(){
+    if(modalBg.classList.contains('open')) return; // avoid clobbering an open form
+    try{
+      var resp = await fetch('/api/stores');
+      if(!resp.ok) return;
+      var data = await resp.json();
+      if(Array.isArray(data)){ stores = data; render(); }
+    }catch(e){}
+  }, 5000);
+}
+
+// ---------- 담당자(이름) 식별 ----------
+var nameGateBg = document.getElementById('nameGateBg');
+var userBadge = document.getElementById('userBadge');
+
+function showNameGate(prefill){
+  document.getElementById('nameGateInput').value = prefill || '';
+  nameGateBg.style.display = 'flex';
+  setTimeout(function(){ document.getElementById('nameGateInput').focus(); }, 50);
+}
+function hideNameGate(){ nameGateBg.style.display = 'none'; }
+function updateUserBadge(){ userBadge.textContent = '담당자: ' + (currentUser || '-') + ' (변경)'; }
+
+document.getElementById('nameGateConfirm').addEventListener('click', function(){
+  var name = document.getElementById('nameGateInput').value.trim();
+  if(!name){ toast('이름을 입력해주세요'); return; }
+  currentUser = name;
+  try{ localStorage.setItem('storeVisitManager_user', name); }catch(e){}
+  hideNameGate();
+  updateUserBadge();
+  render();
+});
+document.getElementById('nameGateInput').addEventListener('keydown', function(e){
+  if(e.key === 'Enter') document.getElementById('nameGateConfirm').click();
+});
+userBadge.addEventListener('click', function(){ showNameGate(currentUser); });
+
+(function initUser(){
+  var saved = null;
+  try{ saved = localStorage.getItem('storeVisitManager_user'); }catch(e){}
+  if(saved){
+    currentUser = saved;
+    hideNameGate();
+    updateUserBadge();
+  } else {
+    showNameGate();
+  }
+})();
+
 initMapControls();
 render();
+loadStoresFromServer();
+startPolling();
 })();
 </script>
 </body>
