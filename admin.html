@@ -111,11 +111,46 @@
 
 <div id="modalBg"><div id="modal"></div></div>
 
+<!-- Firebase SDK 연동 -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyA9GwOvhiKgivI_bQ7CLfjNXdYOoF7UrYM",
+    authDomain: "map1-75007.firebaseapp.com",
+    projectId: "map1-75007",
+    storageBucket: "map1-75007.firebasestorage.app",
+    messagingSenderId: "737801614934",
+    appId: "1:737801614934:web:dfcf2a5c7cb86a9ee02df7",
+    measurementId: "G-MMZ7CC7Z0K"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  window.db = db;
+  window.fsDoc = doc;
+  window.fsSetDoc = setDoc;
+  window.fsDeleteDoc = deleteDoc;
+  window.fsWriteBatch = writeBatch;
+
+  // 실시간 수신 리스너
+  onSnapshot(collection(db, "stores"), (snapshot) => {
+    let newStores = [];
+    snapshot.forEach((doc) => {
+      newStores.push({ id: doc.id, ...doc.data() });
+    });
+    window.stores = newStores;
+    if (window.renderApp) window.renderApp();
+  });
+</script>
+
 <script>
 (function(){
 "use strict";
 
-var stores = [];
+window.stores = [];
 var modalBg = document.getElementById('modalBg');
 var modal = document.getElementById('modal');
 
@@ -128,33 +163,58 @@ function uid(){ return 's'+Math.random().toString(36).slice(2,9); }
 function closeModal(){ modalBg.classList.remove('open'); }
 modalBg.addEventListener('click', function(e){ if(e.target===modalBg) closeModal(); });
 
-// ---------- server sync ----------
-async function loadStores(){
-  try{
-    var resp = await fetch('/api/stores');
-    stores = resp.ok ? await resp.json() : [];
-  }catch(e){ stores = []; toast('서버에서 매장 데이터를 불러오지 못했어요'); }
-  render();
-}
-async function saveStores(){
-  try{
-    await fetch('/api/stores', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(stores)});
-  }catch(e){ toast('저장에 실패했어요 — 네트워크를 확인해주세요'); }
+// Firebase 데이터베이스 헬퍼 함수들
+async function saveStoreToDB(storeData) {
+  if (window.db) {
+    var id = storeData.id || uid();
+    storeData.id = id;
+    await window.fsSetDoc(window.fsDoc(window.db, "stores", id), storeData, { merge: true });
+  }
 }
 
-// ---------- geocoding via backend proxy ----------
+async function removeStoreFromDB(id) {
+  if (window.db) {
+    await window.fsDeleteDoc(window.fsDoc(window.db, "stores", id));
+  }
+}
+
+async function saveMultipleStoresToDB(storesArr) {
+  if (window.db && storesArr.length > 0) {
+    var batch = window.fsWriteBatch(window.db);
+    storesArr.forEach(function(s) {
+      if (!s.id) s.id = uid();
+      var ref = window.fsDoc(window.db, "stores", s.id);
+      batch.set(ref, s, { merge: true });
+    });
+    await batch.commit();
+  }
+}
+
+async function clearAllStoresFromDB() {
+  if (window.db && window.stores.length > 0) {
+    var batch = window.fsWriteBatch(window.db);
+    window.stores.forEach(function(s) {
+      var ref = window.fsDoc(window.db, "stores", s.id);
+      batch.delete(ref);
+    });
+    await batch.commit();
+  }
+}
+
+// OpenStreetMap (Nominatim) 기반 직접 지오코딩 (Vercel 호환)
 var geocodeCache = {};
 function sleep(ms){ return new Promise(function(r){setTimeout(r,ms);}); }
 async function geocodeAddress(address){
   var key = address.trim().toLowerCase();
   if(geocodeCache[key]) return geocodeCache[key];
   try{
-    var resp = await fetch('/api/geocode?address=' + encodeURIComponent(address));
+    var resp = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(address));
     if(!resp.ok) return null;
     var data = await resp.json();
-    if(data && typeof data.lat==='number' && typeof data.lng==='number'){
-      geocodeCache[key] = data;
-      return data;
+    if(data && data.length > 0){
+      var result = {lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon)};
+      geocodeCache[key] = result;
+      return result;
     }
   }catch(e){}
   return null;
@@ -162,6 +222,7 @@ async function geocodeAddress(address){
 
 // ---------- render ----------
 function render(){
+  var stores = window.stores;
   document.getElementById('summaryLine').textContent = '매장 '+stores.length+'곳';
 
   var assignees = Array.from(new Set(stores.map(function(s){return s.assignee;}).filter(Boolean)));
@@ -193,7 +254,7 @@ function render(){
     var tr = document.createElement('tr');
     var stars = s.visitRating ? '★'.repeat(s.visitRating)+'☆'.repeat(5-s.visitRating) : '-';
     tr.innerHTML =
-      '<td><span class="badge '+s.visitStatus+'">'+(statusLabel[s.visitStatus]||s.visitStatus)+'</span></td>'+
+      '<td><span class="badge '+(s.visitStatus||'unassigned')+'">'+(statusLabel[s.visitStatus]||'미방문')+'</span></td>'+
       '<td>'+(s.assignee||'-')+'</td>'+
       '<td>'+(s.region||'-')+'</td>'+
       '<td>'+(s.name||'-')+'</td>'+
@@ -212,13 +273,13 @@ function render(){
     var actions = document.createElement('div');
     actions.className = 'row-actions';
 
-    if(s.visitStatus !== 'unassigned'){
+    if(s.visitStatus && s.visitStatus !== 'unassigned'){
       var unclaim = document.createElement('button');
       unclaim.textContent = '미방문으로';
       unclaim.addEventListener('click', function(){
         s.visitStatus = 'unassigned'; s.assignee = null; s.visitDate = null;
         s.visitRating = null; s.visitMemo = ''; delete s.routeOrder;
-        saveStores(); render();
+        saveStoreToDB(s);
         toast(s.name+' 을(를) 미방문 상태로 되돌렸어요');
       });
       actions.appendChild(unclaim);
@@ -233,8 +294,7 @@ function render(){
     delBtn.textContent = '삭제';
     delBtn.addEventListener('click', function(){
       if(!confirm(s.name+' 을(를) 삭제할까요? 되돌릴 수 없어요.')) return;
-      stores = stores.filter(function(x){ return x.id !== s.id; });
-      saveStores(); render();
+      removeStoreFromDB(s.id);
       toast('삭제했어요');
     });
     actions.appendChild(delBtn);
@@ -243,10 +303,12 @@ function render(){
     tbody.appendChild(tr);
   });
 }
+window.renderApp = render;
+
 document.getElementById('searchInput').addEventListener('input', render);
 document.getElementById('statusFilter').addEventListener('change', render);
 document.getElementById('assigneeFilter').addEventListener('change', render);
-document.getElementById('refreshBtn').addEventListener('click', function(){ loadStores(); toast('최신 데이터를 불러왔어요'); });
+document.getElementById('refreshBtn').addEventListener('click', function(){ render(); toast('최신 데이터를 불러왔어요'); });
 
 // ---------- add / edit modal ----------
 function storeFormHtml(s){
@@ -279,7 +341,8 @@ document.getElementById('addBtn').addEventListener('click', function(){
     var geo = await geocodeAddress(address);
     btn.textContent = orig; btn.disabled = false;
     if(!geo){ toast('주소로 위치를 찾지 못했어요'); return; }
-    stores.push({
+    
+    var newStore = {
       id: uid(), region: document.getElementById('fRegion').value.trim(), name: name,
       category: document.getElementById('fCategory').value.trim(), address: address,
       email: document.getElementById('fEmail').value.trim(), phone: document.getElementById('fPhone').value.trim(),
@@ -287,8 +350,9 @@ document.getElementById('addBtn').addEventListener('click', function(){
       rating: document.getElementById('fRating').value.trim(), reviewCount: document.getElementById('fReview').value.trim(),
       franchise: document.getElementById('fFranchise').value, lat: geo.lat, lng: geo.lng,
       visitStatus: 'unassigned', visitDate: null, assignee: null
-    });
-    closeModal(); saveStores(); render();
+    };
+    saveStoreToDB(newStore);
+    closeModal();
     toast(name+' 을(를) 등록했어요');
   });
 });
@@ -323,7 +387,9 @@ function openEditModal(s){
     s.reviewCount = document.getElementById('fReview').value.trim();
     s.franchise = document.getElementById('fFranchise').value;
     s.lat = geo.lat; s.lng = geo.lng;
-    closeModal(); saveStores(); render();
+    
+    saveStoreToDB(s);
+    closeModal();
     toast(name+' 정보를 저장했어요');
   });
 }
@@ -331,15 +397,14 @@ function openEditModal(s){
 // ---------- clear all ----------
 document.getElementById('clearBtn').addEventListener('click', function(){
   if(!confirm('정말 전체 매장을 삭제할까요? 모든 담당자 화면에서도 사라지고 되돌릴 수 없어요.')) return;
-  stores = [];
-  saveStores(); render();
+  clearAllStoresFromDB();
   toast('전체 삭제했어요');
 });
 
 // ---------- template download ----------
 document.getElementById('templateBtn').addEventListener('click', function(){
   var header = ['지역','상호','업종','주소','이메일주소','전화번호','구글지도링크','영업상태','평점','리뷰수','프랜차이즈여부','위도','경도'];
-  var example = ['강남구','스타커피 강남점','카페','서울 강남구 테헤란로 1','store@example.com','010-1234-5678','https://maps.google.com/?q=...','영업중','4.6','1240','Y','37.4979','127.0276'];
+  var example = ['CBD','스타커피 시드니점','카페','123 George St, Sydney NSW','store@example.com','0412345678','https://maps.google.com/?q=...','영업중','4.6','1240','Y','-33.8688','151.2093'];
   var ws = XLSX.utils.aoa_to_sheet([header, example]);
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '업로드양식');
@@ -349,12 +414,13 @@ document.getElementById('templateBtn').addEventListener('click', function(){
 
 // ---------- export full status ----------
 document.getElementById('exportBtn').addEventListener('click', function(){
+  var stores = window.stores;
   if(stores.length === 0){ toast('등록된 매장이 없어요'); return; }
   var statusLabel = {unassigned:'미방문', today:'오늘 방문 예정', done:'방문완료'};
   var header = ['상태','담당자','지역','상호','업종','주소','이메일','전화번호','영업상태','평점','리뷰수','프랜차이즈여부','방문일','반응별점','메모'];
   var rows = stores.map(function(s){
     return [
-      statusLabel[s.visitStatus]||s.visitStatus, s.assignee||'', s.region||'', s.name||'', s.category||'',
+      statusLabel[s.visitStatus]||s.visitStatus||'미방문', s.assignee||'', s.region||'', s.name||'', s.category||'',
       s.address||'', s.email||'', s.phone||'', s.status||'', s.rating||'', s.reviewCount||'',
       s.franchise==='Y'?'Y':'N', s.visitDate||'', s.visitRating||'', s.visitMemo||''
     ];
@@ -380,7 +446,7 @@ document.getElementById('fileInput').addEventListener('change', function(e){
       rows = rows.slice(1); // row 1 = title row, skip
 
       var toGeocode = [];
-      var fastAdded = 0;
+      var fastAdded = [];
       rows.forEach(function(r){
         var name = (r[1]||'').toString().trim();
         if(!name) return;
@@ -393,31 +459,33 @@ document.getElementById('fileInput').addEventListener('change', function(e){
         };
         var lat = parseFloat(r[11]), lng = parseFloat(r[12]);
         if(!isNaN(lat) && !isNaN(lng)){
-          stores.push(Object.assign({id:uid(), lat:lat, lng:lng, visitStatus:'unassigned', visitDate:null, assignee:null}, entry));
-          fastAdded++;
+          fastAdded.push(Object.assign({id:uid(), lat:lat, lng:lng, visitStatus:'unassigned', visitDate:null, assignee:null}, entry));
         } else if(addr){
           toGeocode.push(entry);
         }
       });
-      if(fastAdded>0){ render(); toast(fastAdded+'곳을 위도/경도로 바로 추가했어요'); }
+
+      if(fastAdded.length > 0){ 
+        saveMultipleStoresToDB(fastAdded); 
+        toast(fastAdded.length+'곳을 바로 추가했어요'); 
+      }
 
       if(toGeocode.length === 0){
-        if(fastAdded===0) toast('가져올 행이 없어요. D열(주소) 또는 L·M열(위도/경도)을 확인해주세요');
-        else saveStores();
+        if(fastAdded.length===0) toast('가져올 행이 없어요. D열(주소) 또는 L·M열(위도/경도)을 확인해주세요');
         return;
       }
       var added = 0, failed = 0;
+      var geocodedBatch = [];
       for(var i=0;i<toGeocode.length;i++){
         toast('매장 위치 찾는 중… ('+(i+1)+'/'+toGeocode.length+')');
         var geo = await geocodeAddress(toGeocode[i].address);
         if(geo){
-          stores.push(Object.assign({id:uid(), lat:geo.lat, lng:geo.lng, visitStatus:'unassigned', visitDate:null, assignee:null}, toGeocode[i]));
+          geocodedBatch.push(Object.assign({id:uid(), lat:geo.lat, lng:geo.lng, visitStatus:'unassigned', visitDate:null, assignee:null}, toGeocode[i]));
           added++;
-          render();
         } else { failed++; }
         if(i < toGeocode.length-1) await sleep(300);
       }
-      saveStores();
+      saveMultipleStoresToDB(geocodedBatch);
       toast(added+'곳을 등록했어요'+(failed? ' ('+failed+'곳은 주소를 찾지 못함)':''));
     }catch(err){
       toast('파일을 읽는 중 오류가 발생했어요. 양식에 맞는지 확인해주세요');
@@ -427,8 +495,6 @@ document.getElementById('fileInput').addEventListener('change', function(e){
   reader.readAsArrayBuffer(file);
 });
 
-loadStores();
-setInterval(function(){ if(!modalBg.classList.contains('open')) loadStores(); }, 8000);
 })();
 </script>
 </body>
