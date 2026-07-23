@@ -22,7 +22,6 @@
   header .sub{font-size:11px;color:var(--muted);margin-top:2px;}
   .icon-btn{width:32px;height:32px;border-radius:9px;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;font-size:15px;}
 
-
   .tabbar{display:flex;border-bottom:1px solid #00000015;flex:0 0 auto;}
   .tabbar button{flex:1;padding:10px 4px;border:none;background:none;font-size:12.5px;font-weight:700;color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;}
   .tabbar button.active{color:var(--ink);border-bottom-color:var(--route);}
@@ -89,7 +88,6 @@
   .card-actions button{border:none;border-radius:8px;padding:7px 9px;font-size:10.5px;font-weight:700;cursor:pointer;background:var(--ink);color:var(--paper);white-space:nowrap;}
   .card-actions .undo{background:#00000012;color:var(--ink);}
   .gmap-card-btn{border:none;border-radius:8px;padding:7px 9px;font-size:10.5px;font-weight:700;cursor:pointer;background:#1a73e8;color:#fff;text-decoration:none;text-align:center;white-space:nowrap;}
-  .divider{height:1px;background:#00000010;margin:0 16px;}
 
   #bulkBar{position:sticky;bottom:0;background:var(--ink);color:var(--paper);display:none;align-items:center;justify-content:space-between;padding:10px 16px calc(10px + env(safe-area-inset-bottom));flex:0 0 auto;}
   #bulkBar.show{display:flex;}
@@ -118,7 +116,6 @@
 
   #toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:9px 16px;border-radius:20px;font-size:12px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:30;max-width:88%;text-align:center;}
   #toast.show{opacity:1;}
-
 </style>
 </head>
 <body>
@@ -223,30 +220,60 @@
 
 </div>
 
-<div id="modalBg">
-  <div id="modal"></div>
-</div>
-
+<div id="modalBg"><div id="modal"></div></div>
 <div id="toast"></div>
+
+<!-- Firebase SDK 연동 -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyA9GwOvhiKgivI_bQ7CLfjNXdYOoF7UrYM",
+    authDomain: "map1-75007.firebaseapp.com",
+    projectId: "map1-75007",
+    storageBucket: "map1-75007.firebasestorage.app",
+    messagingSenderId: "737801614934",
+    appId: "1:737801614934:web:dfcf2a5c7cb86a9ee02df7",
+    measurementId: "G-MMZ7CC7Z0K"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  window.db = db;
+  window.fsDoc = doc;
+  window.fsSetDoc = setDoc;
+  window.fsDeleteDoc = deleteDoc;
+  window.fsWriteBatch = writeBatch;
+
+  // Firebase 실시간 수신 설정
+  onSnapshot(collection(db, "stores"), (snapshot) => {
+    let newStores = [];
+    snapshot.forEach((doc) => {
+      newStores.push({ id: doc.id, ...doc.data() });
+    });
+    window.stores = newStores;
+    if (window.renderApp) window.renderApp();
+  });
+</script>
 
 <script>
 (function(){
 "use strict";
 
-var stores = []; // {id,region,name,category,address,email,phone,gmapLink,status,rating,reviewCount,franchise,lat,lng,visitStatus,visitDate,assignee}
+window.stores = [];
 var currentLoc = null;
 var currentUser = null;
 var unvisitedOnly = true;
 var activeTab = 'unassigned';
-var selected = new Set(); // checkbox-selected ids (per current tab context)
+var selected = new Set();
 var lastVisibleList = [];
 var lassoSelected = new Set();
 var filters = {regions:new Set(), categories:new Set(), statuses:new Set(), franchise:new Set(), ratingMin:0, reviewMin:0, sort:'rating_desc'};
-var viewBox = {x:0,y:0,w:400,h:400};
 var userZoomed = false;
 var lassoMode = false;
 var pickRefMode = false;
-var lastBounds = null;
 
 var appEl = document.getElementById('app');
 var listWrap = document.getElementById('listWrap');
@@ -264,6 +291,28 @@ function toast(msg){
   t.textContent = msg; t.classList.add('show');
   clearTimeout(t._h); t._h = setTimeout(function(){t.classList.remove('show');}, 2200);
 }
+
+// Firebase 데이터베이스 연동 함수
+async function saveStoreToDB(storeData) {
+  if (window.db) {
+    var id = storeData.id || uid();
+    storeData.id = id;
+    await window.fsSetDoc(window.fsDoc(window.db, "stores", id), storeData, { merge: true });
+  }
+}
+
+async function saveMultipleStoresToDB(storesArr) {
+  if (window.db && storesArr.length > 0) {
+    var batch = window.fsWriteBatch(window.db);
+    storesArr.forEach(function(s) {
+      if (!s.id) s.id = uid();
+      var ref = window.fsDoc(window.db, "stores", s.id);
+      batch.set(ref, s, { merge: true });
+    });
+    await batch.commit();
+  }
+}
+
 function haversineKm(a,b){
   var R=6371, dLat=(b.lat-a.lat)*Math.PI/180, dLng=(b.lng-a.lng)*Math.PI/180;
   var lat1=a.lat*Math.PI/180, lat2=b.lat*Math.PI/180;
@@ -297,6 +346,7 @@ function renderChips(containerId, values, selectedSet){
 
 // ---------- filtering / sorting ----------
 function tabStores(tab){
+  var stores = window.stores;
   if(tab === 'unassigned'){
     return unvisitedOnly
       ? stores.filter(function(s){ return s.visitStatus === 'unassigned'; })
@@ -338,6 +388,7 @@ function ensureOrder(list){
 
 // ---------- render ----------
 function render(){
+  var stores = window.stores;
   document.getElementById('countSummary').textContent = '매장 '+stores.length+'곳';
   document.getElementById('cntUnassigned').textContent = stores.filter(function(s){return s.visitStatus==='unassigned';}).length;
   document.getElementById('cntToday').textContent = stores.filter(function(s){return s.visitStatus==='today' && s.assignee===currentUser;}).length;
@@ -361,12 +412,12 @@ function render(){
   renderMap(visible);
   renderBulkBar();
   updateSelectAllBtn();
-  pushStoresToServer();
 }
+window.renderApp = render;
 
 function renderList(visible){
   listWrap.innerHTML = '';
-  if(stores.length === 0){
+  if(window.stores.length === 0){
     listWrap.appendChild(listEmpty);
     return;
   }
@@ -475,7 +526,7 @@ function buildCard(s){
       s.visitStatus = 'today';
       s.visitDate = null;
       s.assignee = currentUser;
-      render();
+      saveStoreToDB(s);
       toast(s.name+' 을(를) 오늘 방문 리스트로 되돌렸어요');
     });
     actions.appendChild(undo);
@@ -530,11 +581,15 @@ function attachDragToday(row, storeId){
       });
       if(placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
 
+      var updatedBatch = [];
       newOrderIds.forEach(function(id, i){
-        var s = stores.find(function(x){ return x.id === id; });
-        if(s) s.routeOrder = i+1;
+        var s = window.stores.find(function(x){ return x.id === id; });
+        if(s) {
+          s.routeOrder = i+1;
+          updatedBatch.push(s);
+        }
       });
-      render();
+      saveMultipleStoresToDB(updatedBatch);
     }
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
@@ -553,16 +608,21 @@ function renderBulkBar(){
 document.getElementById('bulkCancel').addEventListener('click', function(){ selected.clear(); render(); });
 document.getElementById('bulkAction').addEventListener('click', function(){
   var ids = Array.from(selected);
+  var updatedStores = [];
   if(activeTab === 'unassigned'){
     ids.forEach(function(id){
-      var s = stores.find(function(x){return x.id===id;});
-      if(s && s.visitStatus === 'unassigned'){ s.visitStatus = 'today'; s.assignee = currentUser; }
+      var s = window.stores.find(function(x){return x.id===id;});
+      if(s && s.visitStatus === 'unassigned'){ 
+        s.visitStatus = 'today'; 
+        s.assignee = currentUser; 
+        updatedStores.push(s);
+      }
     });
+    saveMultipleStoresToDB(updatedStores);
     toast(ids.length+'곳을 오늘 방문 리스트로 옮겼어요');
     selected.clear();
-    render();
   } else if(activeTab === 'today'){
-    var toComplete = ids.map(function(id){ return stores.find(function(x){return x.id===id;}); }).filter(Boolean);
+    var toComplete = ids.map(function(id){ return window.stores.find(function(x){return x.id===id;}); }).filter(Boolean);
     openCompleteModal(toComplete);
   }
 });
@@ -671,9 +731,20 @@ function openDetail(s){
   var actionBtn = document.getElementById('detailAction');
   if(actionBtn){
     actionBtn.addEventListener('click', function(){
-      if(s.visitStatus === 'unassigned'){ s.visitStatus = 'today'; s.assignee = currentUser; closeModal(); render(); }
+      if(s.visitStatus === 'unassigned'){ 
+        s.visitStatus = 'today'; 
+        s.assignee = currentUser; 
+        saveStoreToDB(s);
+        closeModal(); 
+      }
       else if(s.visitStatus === 'today'){ closeModal(); openCompleteModal([s]); }
-      else { s.visitStatus = 'today'; s.visitDate = null; s.assignee = currentUser; closeModal(); render(); }
+      else { 
+        s.visitStatus = 'today'; 
+        s.visitDate = null; 
+        s.assignee = currentUser; 
+        saveStoreToDB(s);
+        closeModal(); 
+      }
     });
   }
 }
@@ -715,9 +786,9 @@ function openCompleteModal(storeList){
       s.visitRating = selectedStars || null;
       s.visitMemo = memo;
     });
+    saveMultipleStoresToDB(storeList);
     closeModal();
     selected.clear();
-    render();
     toast(storeList.length+'곳 방문완료 처리했어요');
   });
 }
@@ -736,7 +807,7 @@ document.getElementById('locBtn').addEventListener('click', function(){
 var map = null;
 var markersLayer = null;
 var routeLayer = null;
-var currentMarkerData = []; // [{store, marker, latlng}]
+var currentMarkerData = [];
 var suppressAutoFit = false;
 var lassoLayer = null;
 var lassoLatLngs = [];
@@ -745,7 +816,7 @@ function initMapControls(){
   map = L.map('mapSvg', {
     zoomControl: false,
     attributionControl: true,
-    center: [37.5665, 126.9780],
+    center: [-33.8688, 151.2093], // 시드니 중심 좌표 기본값
     zoom: 12
   });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -817,7 +888,6 @@ function pointInPolygonLatLng(pt, poly){
 function pinRadius(){
   if(!map) return 9;
   var z = map.getZoom();
-  // shrink pins as you zoom in further, so dense clusters overlap less
   return Math.max(4, Math.min(11, 15 - (z - 11)));
 }
 
@@ -916,17 +986,22 @@ function renderLassoBar(){
 }
 document.getElementById('lassoClear').addEventListener('click', function(){ lassoSelected.clear(); render(); });
 document.getElementById('lassoAddToday').addEventListener('click', function(){
+  var updatedStores = [];
   lassoSelected.forEach(function(id){
-    var s = stores.find(function(x){return x.id===id;});
-    if(s && s.visitStatus === 'unassigned'){ s.visitStatus = 'today'; s.assignee = currentUser; }
+    var s = window.stores.find(function(x){return x.id===id;});
+    if(s && s.visitStatus === 'unassigned'){ 
+      s.visitStatus = 'today'; 
+      s.assignee = currentUser; 
+      updatedStores.push(s);
+    }
   });
+  saveMultipleStoresToDB(updatedStores);
   toast(lassoSelected.size+'곳을 오늘 방문 리스트로 옮겼어요');
   lassoSelected.clear();
-  render();
 });
 
 function renderMapTools(){
-  if(stores.length === 0){ mapTools.style.display = 'none'; return; }
+  if(window.stores.length === 0){ mapTools.style.display = 'none'; return; }
   if(activeTab === 'unassigned'){
     mapTools.style.display = 'flex';
     mapTools.innerHTML = '<button id="lassoBtn" class="'+(lassoMode?'on':'')+'">✏️ 범위 선택</button>';
@@ -980,8 +1055,8 @@ function resetTodayList(){
   var list = tabStores('today');
   if(list.length === 0){ toast('오늘 방문 리스트가 이미 비어있어요'); return; }
   list.forEach(function(s){ s.visitStatus = 'unassigned'; delete s.routeOrder; });
+  saveMultipleStoresToDB(list);
   selected.clear();
-  render();
   toast('오늘 방문 리스트를 초기화했어요 ('+list.length+'곳을 전체 매장으로 되돌림)');
 }
 
@@ -1002,8 +1077,7 @@ function optimizeRouteToday(){
     cursor = next;
   }
   order.forEach(function(s,i){ s.routeOrder = i+1; });
-  tabStores('today').forEach(function(s){ if(order.indexOf(s) === -1) delete s.routeOrder; });
-  render();
+  saveMultipleStoresToDB(order);
   toast('기준 위치 기준으로 최적 동선을 계산했어요 ('+order.length+'곳)');
 }
 
@@ -1011,43 +1085,6 @@ document.getElementById('unvisitedOnlyCheckbox').addEventListener('change', func
   unvisitedOnly = e.target.checked;
   render();
 });
-
-// ---------- shared backend sync (multi-user) ----------
-// Talks to your own server's /api/stores (see server.js). If no backend is
-// reachable (e.g. testing here in the claude.ai preview), this silently no-ops
-// and the app behaves as a local single-user session, same as before.
-var pushDebounceTimer = null;
-var initialLoadDone = false;
-function pushStoresToServer(){
-  if(!initialLoadDone) return; // don't push until we've merged whatever's already on the server
-  clearTimeout(pushDebounceTimer);
-  pushDebounceTimer = setTimeout(function(){
-    fetch('/api/stores', {
-      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(stores)
-    }).catch(function(){});
-  }, 400);
-}
-async function loadStoresFromServer(){
-  try{
-    var resp = await fetch('/api/stores');
-    if(resp.ok){
-      var data = await resp.json();
-      if(Array.isArray(data) && data.length){ stores = data; render(); }
-    }
-  }catch(e){ /* no backend reachable — stay in local-only mode */ }
-  finally{ initialLoadDone = true; }
-}
-function startPolling(){
-  setInterval(async function(){
-    if(modalBg.classList.contains('open')) return; // avoid clobbering an open form
-    try{
-      var resp = await fetch('/api/stores');
-      if(!resp.ok) return;
-      var data = await resp.json();
-      if(Array.isArray(data)){ stores = data; render(); }
-    }catch(e){}
-  }, 5000);
-}
 
 // ---------- 담당자(이름) 식별 ----------
 var nameGateBg = document.getElementById('nameGateBg');
@@ -1088,9 +1125,7 @@ userBadge.addEventListener('click', function(){ showNameGate(currentUser); });
 })();
 
 initMapControls();
-render();
-loadStoresFromServer();
-startPolling();
+
 })();
 </script>
 </body>
